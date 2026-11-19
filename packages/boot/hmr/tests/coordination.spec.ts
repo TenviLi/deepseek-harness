@@ -59,6 +59,28 @@ it('serializes mutations, rejects nesting and keeps the queue usable after failu
   expect(order).toEqual([1, 2])
 })
 
+it('starts a fresh transaction from a callback the previous one scheduled', async () => {
+  const { hmr } = await fixture()
+  const scheduled = Promise.withResolvers<unknown>()
+  await hmr.runExclusive(async () => {
+    // A plugin timer registered while a reload runs keeps that transaction in its async store after
+    // it settles; the caller is not inside anything, so it must queue instead of being refused.
+    setTimeout(() => { scheduled.resolve(hmr.runExclusive(async () => 'settled')) }, 0)
+  })
+  await expect(scheduled.promise).resolves.toBe('settled')
+})
+
+it('does not accept profile reconciliation from a settled transaction', async () => {
+  const { hmr } = await fixture()
+  const scheduled = Promise.withResolvers<unknown>()
+  await hmr.runExclusive(async () => {
+    // Reconciling outside a transaction would replace modules without the queue, so a leftover
+    // record must not satisfy the "inside runExclusive" guard.
+    setTimeout(() => { scheduled.resolve(hmr.reconcileProfile().catch((error: Error) => error.message)) }, 0)
+  })
+  await expect(scheduled.promise).resolves.toBe('HMR profile reconciliation must run inside runExclusive')
+})
+
 it('holds configuration handlers behind configuration mutations', async () => {
   const { hmr, dir } = await fixture()
   const filename = join(dir, 'package.json')
